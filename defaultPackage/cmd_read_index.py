@@ -30,8 +30,8 @@ if len(sys.argv) == 4:
                     if len(line) > 0 and line.split()[0] == termID:
                         print("Listing for term: " + sys.argv[3])
                         print("TERM_ID: " + str(termID))
-                        print("Number of documents containing term: " + line.split()[1])
-                        print("Term frequency in corpus: " + line.split()[2])
+                        print("Number of documents containing term: " + line.split()[2])
+                        print("Term frequency in corpus: " + line.split()[1])
 
         end = timeit.default_timer()
         print("\nTime : " + str(end - start) + ' seconds')
