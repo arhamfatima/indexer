@@ -1,6 +1,8 @@
 import os
 import re
+import sys
 import timeit
+from io import StringIO
 
 import bs4
 import nltk
@@ -17,23 +19,25 @@ stemmer = SnowballStemmer("english")
 stopListDict = {}
 invertedIndexByTermId = {}
 
-
-class InvertedIndexLine:
-    docPositionsById = {}
-    termIDCount = 0
-    docFrequency = 0
-    termFrequency = 0
-
-    def __init__(self, term_id):
-        self.termId = term_id
+sumTimes = {}
 
 
 def add_timing(key, value):
-    global sumTimesByCategory
-    if key not in sumTimesByCategory:
-        sumTimesByCategory[key] = value
+    global sumTimes
+    if key not in sumTimes:
+        sumTimes[key] = value
     else:
-        sumTimesByCategory[key] += value
+        sumTimes[key] += value
+
+
+class InvertedIndexLine:
+    termID = 0
+    termFrequency = 0
+    lastWrittenDocId = 0
+
+    def __init__(self, term_id):
+        self.termId = term_id
+        self.docPositionsById = {}
 
 
 def filter_tags(element):
@@ -116,35 +120,108 @@ def main():
     startIndex = 0
     endIndex = len(filePathsList)
 
-    # for all files
-    for i in range(startIndex, endIndex):
+    sumSpeeds = 0
 
-        file = open(filePathsList[i], errors='ignore')
+    # for all files
+    for docId in range(startIndex, endIndex):
+
+        loopStartTime = timeit.default_timer()
+
+        file = open(filePathsList[docId], errors='ignore')
 
         # parsing
+        time = timeit.default_timer()
         parsedContent = parse(file.read())
+        add_timing('Parsing', timeit.default_timer() - time)
 
         # tokenizing
+        time = timeit.default_timer()
         tokens = tokenize(parsedContent)
+        add_timing('Tokenizing', timeit.default_timer() - time)
 
         # assign termID, remove stop words, apply stemming, and lowercase
+        time = timeit.default_timer()
         words = process(tokens)
+        add_timing('Stem&Lower', timeit.default_timer() - time)
 
         file.close()
 
-        # make inverted docId
-        incremented = False
-
+        # make inverted index
+        time = timeit.default_timer()
+        uniqueWords = {}
         for term in words:
-            termIDCount = termIdsByTerm[term]
-            line = None
-            if termIDCount not in invertedIndexByTermId:
-                line = InvertedIndexLine(termIDCount)
-            if not incremented:
-                line.docFrequency += 1
-                incremented = True
-            line.termFrequency += 1
 
+            # skip this word if already written
+            if term in uniqueWords:
+                continue
+
+            # add to dictionary
+            uniqueWords[term] = 1
+
+            termID = termIdsByTerm[term]
+
+            # if not in global dictionary
+            if termID not in invertedIndexByTermId:
+                termLine = InvertedIndexLine(termID)
+            else:
+                termLine = invertedIndexByTermId[termID]
+
+            # generate positions
+            positions = [str(i + 1) for i, x in enumerate(words) if x == term]
+
+            termLine.termFrequency += len(positions)
+
+            termLine.docPositionsById[docId] = positions
+
+            invertedIndexByTermId[termID] = termLine
+
+        add_timing('MakingInvertedIndex', timeit.default_timer() - time)
+
+        # calculate speed
+        currSpeed = timeit.default_timer() - loopStartTime
+        sumSpeeds += currSpeed
+        if docId % 5 == 0:
+            print('\rElapsed Time : ' + str(round(timeit.default_timer() - startTime, 1)), end='')
+            print(' Progress : ' + str(docId) + '/' + str(endIndex - 1), end='')
+            print(' Remaining Time : ' + str(round((endIndex - 1 - docId) * (sumSpeeds / (docId + 1)), 0)), end='')
+            sys.stdout.flush()
+
+    time = timeit.default_timer()
+
+    fileStr = StringIO()
+
+    # write inverted index
+    # for each term in dictionary
+    for termID, termLine in invertedIndexByTermId.items():
+
+        # write properties of this term
+        fileStr.write(str(termID) + '\t' + str(termLine.termFrequency) + '\t' + str(len(termLine.docPositionsById)) + '\t')
+        firstDocId = -1
+
+        # for each doc containing this term
+        for docID, positions in termLine.docPositionsById.items():
+
+            deltaEncodedDocId = docID
+            if firstDocId != -1:
+                deltaEncodedDocId = docID - firstDocId
+            else:
+                firstDocId = docID
+
+            firstPosition = True
+
+            # for each position
+            for position in positions:
+                if firstPosition:
+                    fileStr.write(str(deltaEncodedDocId) + ',' + str(position) + '\t')
+                    firstPosition = False
+                else:
+                    fileStr.write('0,' + str(position) + '\t')
+
+        fileStr.write('\n')
+
+    add_timing('WritingIndexToRam', timeit.default_timer() - time)
+
+    time = timeit.default_timer()
 
     # write doc ids
     with open("docids.txt", "w", encoding="utf8") as file:
@@ -163,9 +240,17 @@ def main():
                 exceptions += 1
                 continue
 
+    with open("term_index.txt", "w", encoding='utf8') as file:
+        file.write(fileStr.getvalue())
+
+    add_timing('WritingToFiles', timeit.default_timer() - time)
+
     stop = timeit.default_timer()
     print('\n\nExceptions : ' + str(exceptions))
     print('Time: ' + str(round(stop - startTime, 4)))
+
+    for key in sumTimes:
+        print(key + ' : ' + str(round(sumTimes[key], 3)))
 
 
 if __name__ == "__main__":
